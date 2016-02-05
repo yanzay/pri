@@ -1,0 +1,45 @@
+---
+- hosts: raspberrypi
+  remote_user: osmc
+  become: yes
+  become_method: sudo
+  tasks:
+    - name: Update system
+      apt: upgrade=dist update_cache=yes
+    - name: Fix sudoers
+      file: path=/etc/sudoers.d/osmc-no-secure-path state=absent
+    - name: Configure power management
+      lineinfile: dest=/boot/config.txt line="max_usb_current=1"
+    - name: Reboot
+      command: shutdown -r now "Ansible updates triggered"
+      async: 0
+      poll: 0
+      ignore_errors: true
+    - name: Wait for restart
+      local_action: wait_for host={{ inventory_hostname }} state=started delay=10 timeout=120
+      become: no
+    - name: Mount storage
+      mount: name=/mnt/storage src=/dev/sda1 fstype=ext4 state=mounted
+    - name: Make links
+      file: src=/mnt/storage/{{ item }} dest=/home/osmc/{{ item }} owner=osmc group=osmc state=link mode=0777
+      with_items:
+        - downloads
+        - tmp
+        - watchdir
+    - name: Install transmission
+      apt: name=transmission-daemon state=present
+    - name: Ensure transmission stopped
+      service: name=transmission-daemon state=stopped
+    - name: Copy transmission config
+      copy: src=settings.json dest=/etc/transmission-daemon/settings.json
+    - name: Launch transmission
+      service: name=transmission-daemon state=started
+    - name: Download gorrent
+      get_url: url=https://github.com/yanzay/gorrent/releases/download/v0.1/gorrent dest=/home/osmc/gorrent mode=0777
+    - name: Install cron
+      apt: name=cron state=present
+    - name: Make sure cron started
+      service: name=cron state=started
+    - name: Set up cron
+      cron: name="check torrents" minute="*/10" job="/home/osmc/gorrent" state=present
+      become: no
